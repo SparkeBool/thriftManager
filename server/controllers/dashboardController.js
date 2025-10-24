@@ -1,120 +1,86 @@
-// Import your core application models
-const Member = require("../models/Member");
-const Contribution = require("../models/Contribution");
-const Thrift = require("../models/Thrift");
-const Activity = require("../models/Activity");
+// backend/controllers/dashboardController.js
 
-// @desc    Get dashboard stats for the logged-in user
-// @route   GET /api/dashboard/stats
-// @access  Private
-const getDashboardStats = async (req, res) => {
-  const userId = req.user._id;
-  try {
-    // Total Members for this user
-    const totalMembers = await Member.countDocuments({ userId });
+const asyncHandler = require('express-async-handler');
+const Member = require('../models/Member');       // Import your Member model
+const Thrift = require('../models/Thrift');       // Import your Thrift model
+const Contribution = require('../models/Contribution'); // Import your Contribution model
+const Activity = require('../models/Activity');
 
-    // 2. Total Contributions Amount for this user
-    // Use MongoDB aggregation for sum if you have many contributions for better performance
-    const totalContributionsResult = await Contribution.aggregate([
-      { $match: { userId } }, // Filter by user
-      { $group: { _id: null, totalAmount: { $sum: "$amount" } } }, // Sum the 'amount' field
+/**
+ * @desc    Get aggregated dashboard statistics for the authenticated user
+ * @route   GET /api/dashboard/stats
+ * @access  Private
+ */
+const getDashboardStats = asyncHandler(async (req, res) => {
+    const userId = req.user.id; // ID of the currently logged-in user
+
+    // --- 1. Find all Thrifts belonging to the user ---
+    // This is the core filter, as Contributions are linked to Thrifts.
+    const userThrifts = await Thrift.find({ userId: userId }).select('_id').lean();
+    const userThriftIds = userThrifts.map(thrift => thrift._id);
+
+    // --- 2. Fetch all key metrics concurrently using Promise.all ---
+    const [
+        totalMembers,
+        totalThrifts,
+        totalContributionsResult,
+        recentActivity
+    ] = await Promise.all([
+
+        // A. Total Members: Count of members created by this user
+        // Assuming your Member model has a 'userId' field linking to the creator/owner
+        Member.countDocuments({ userId: userId }),
+
+        // B. Total Thrifts: Count of thrifts created by this user
+        Thrift.countDocuments({ userId: userId }),
+
+        // C. Total Contributions Amount: Aggregate sum of all contributions for the user's thrifts
+        Contribution.aggregate([
+            // Filter contributions to only those associated with the user's thrifts
+            { $match: { thrift: { $in: userThriftIds } } },
+            // Group and sum the 'amount' field
+            { $group: { _id: null, total: { $sum: "$amount" } } }
+        ]),
+
+        // D. Recent Activity: Latest contributions (e.g., 5 items)
+        Contribution.find({ thrift: { $in: userThriftIds } })
+            .sort({ date: -1 }) // Sort by date descending (newest first)
+            .limit(5)
+            .populate('memberId', 'name')
+            .populate('thrift', 'name')
+            .lean() // Return plain JS objects
     ]);
-    const totalContributionsAmount =
-      totalContributionsResult.length > 0
-        ? totalContributionsResult[0].totalAmount
+
+    // Extract the total contributions value (it comes from an aggregation array)
+    const totalContributions = totalContributionsResult.length > 0
+        ? totalContributionsResult[0].total
         : 0;
-    const formattedTotalContributions = `₦${totalContributionsAmount.toLocaleString()}`;
 
-    // 3. Active Thrifts for this user
-    const activeThrifts = await Thrift.countDocuments({
-      userId,
-      status: "active",
+    // --- 3. Send the response matching the frontend expectations ---
+    res.status(200).json({
+        totalMembers: totalMembers,
+        totalThrifts: totalThrifts,
+        totalContributions: totalContributions,
+        recentActivity: recentActivity,
+        // You can add other metrics here like: totalPending, totalOverdue, etc.
     });
+});
 
-    // Construct the stats array
-    const stats = [
-      {
-        title: "Total Members",
-        value: totalMembers.toLocaleString(),
-        icon: "Users",
-        bgColor: "#6610f2",
-        growth: "+15%",
-        trend: "up",
-      }, // Growth/trend can be dynamic based on historical data if implemented
-      {
-        title: "Total Contributions",
-        value: formattedTotalContributions,
-        icon: "DollarSign",
-        bgColor: "#20c997",
-        growth: "+8%",
-        trend: "up",
-      },
-      {
-        title: "Active Thrifts",
-        value: activeThrifts.toLocaleString(),
-        icon: "PieChart",
-        bgColor: "#fd7e14",
-        growth: "+5%",
-        trend: "up",
-      },
-    ];
-
-    res.status(200).json(stats);
-  } catch (error) {
-    console.error(`Error fetching dashboard stats for user ${userId}:`, error);
-    res.status(500).json({
-      message: "Error fetching dashboard stats",
-      error: error.message,
-    });
-  }
-};
-
-// @desc    Get recent activities for the logged-in user
-// @route   GET /api/dashboard/activities
-// @access  Private
-const getDashboardActivities = async (req, res) => {
-  const userId = req.user._id;
-  try {
-    const recentActivities = await Activity.find({ userId })
-      .sort({ createdAt: -1 })
-      .limit(5);
-
-    // Format activities for frontend
-    const formattedActivities = recentActivities.map((activity) => ({
-      action: activity.action,
-      time: activity.time || activity.createdAt.toLocaleString(),
-      icon: activity.icon,
-    }));
-
-    res.status(200).json(formattedActivities);
-  } catch (error) {
-    console.error(
-      `Error fetching dashboard activities for user ${userId}:`,
-      error
-    );
-    res.status(500).json({
-      message: "Error fetching dashboard activities",
-      error: error.message,
-    });
-  }
-};
-
-// @desc    Debug: Get all activities (for troubleshooting only)
-// @route   GET /api/dashboard/debug-activities
-const getAllActivitiesDebug = async (req, res) => {
-  try {
-    const activities = await Activity.find({}).limit(10);
+/**
+ * @desc    Get recent activities for the authenticated user
+ * @route   GET /api/dashboard/activities
+ * @access  Private
+ */
+const getDashboardActivities = asyncHandler(async (req, res) => {
+    const userId = req.user.id;
+    const activities = await Activity.find({ userId })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean();
     res.status(200).json(activities);
-  } catch (error) {
-    res.status(500).json({
-      message: "Error fetching all activities",
-      error: error.message,
-    });
-  }
-};
+});
 
 module.exports = {
-  getDashboardStats,
-  getDashboardActivities,
-  getAllActivitiesDebug,
+    getDashboardStats,
+    getDashboardActivities
 };

@@ -19,27 +19,64 @@ const Dashboard = () => {
   const [recentActivities, setRecentActivities] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    Promise.all([
-      fetch("/api/dashboard/stats", { credentials: "include" }).then((res) =>
-        res.json()
-      ),
-      fetch("/api/dashboard/activities", { credentials: "include" }).then(
-        (res) => res.json()
-      ),
-    ])
-      .then(([statsData, activitiesData]) => {
-        const mappedStats = statsData.map((stat) => ({
-          ...stat,
-          icon: iconMap[stat.icon] || <Users size={24} />,
-        }));
-        setStats(mappedStats);
-        setRecentActivities(activitiesData);
-        setLoading(false);
+useEffect(() => {
+  console.log("Dashboard: Fetching stats and activities...");
+  Promise.all([
+    fetch("/api/dashboard/stats", { credentials: "include" })
+      .then((res) => {
+        console.log("Stats response status:", res.status);
+        return res.json();
       })
-      .catch(() => setLoading(false));
-  }, []);
+      .catch((err) => {
+        console.error("Stats fetch error:", err);
+        return [];
+      }),
+    fetch("/api/dashboard/activities", { credentials: "include" })
+      .then((res) => {
+        console.log("Activities response status:", res.status);
+        return res.json();
+      })
+      .catch((err) => {
+        console.error("Activities fetch error:", err);
+        return [];
+      }),
+  ]).then(([statsData, activitiesData]) => {
+      console.log("Stats data:", statsData);
+      console.log("Activities data:", activitiesData);
 
+  const mappedStats = [
+    {
+      title: "Total Members",
+      value: statsData.totalMembers || 0,
+      icon: iconMap.Users,
+      bgColor: "#007bff",
+      trend: "up",
+      growth: "+5%",
+    },
+    {
+      title: "Total Thrifts",
+      value: statsData.totalThrifts || 0,
+      icon: iconMap.PieChart,
+      bgColor: "#28a745",
+      trend: "up",
+      growth: "+3%",
+    },
+    {
+      title: "Total Contributions",
+      value: statsData.totalContributions || 0,
+      icon: iconMap.DollarSign,
+      bgColor: "#ffc107",
+      trend: "up",
+      growth: "+8%",
+    },
+  ];
+
+  setStats(mappedStats);
+  setRecentActivities(activitiesData || []);
+  setLoading(false);
+});
+
+}, []);
   if (loading) return <div className="text-center py-5">Loading...</div>;
 
   return (

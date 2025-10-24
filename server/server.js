@@ -37,6 +37,20 @@ app.use('/api/members', memberRoutes);
 app.use('/api/contributions', contributionRoutes);
 app.use('/api/thrifts', thriftRoutes);
 
+
+// Error Handling Middleware
+app.use((err, req, res, next) => {
+  console.error('Error middleware:', err.message);
+
+  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+  res.status(statusCode);
+
+  res.json({
+    message: err.message,
+    stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+  });
+});
+
 // Root route
 app.get('/', (req, res) => {
     res.send('API is running...');
